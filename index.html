@@ -10,7 +10,6 @@
 <style>
 body {
   margin: 0;
-  font-family: sans-serif;
   background: #000;
   overflow: hidden;
 }
@@ -20,21 +19,18 @@ body {
   height: 100vh;
 }
 
-/* デカボタンUI /
+/* UI（回転の影響受けない） /
 #ui {
-  position: absolute;
+  position: fixed;
   bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
-  text-align: center;
+  right: 20px;
+  z-index: 9999;
 }
 
 button {
-  padding: 18px 25px;
-  margin: 8px;
+  padding: 18px 22px;
   font-size: 18px;
-  border-radius: 15px;
+  border-radius: 50%;
   border: none;
   background: #0a84ff;
   color: white;
@@ -42,19 +38,22 @@ button {
 
 / 速度 /
 #speed {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
   font-size: 28px;
   font-weight: bold;
-  margin-top: 10px;
   color: white;
+  z-index: 9999;
 }
 
 / 三角マーカー */
 .triangle {
   width: 0;
   height: 0;
-  border-left: 12px solid transparent;
-  border-right: 12px solid transparent;
-  border-bottom: 24px solid #0a84ff;
+  border-left: 14px solid transparent;
+  border-right: 14px solid transparent;
+  border-bottom: 28px solid #0a84ff;
   transform-origin: center;
 }
 </style>
@@ -64,30 +63,25 @@ button {
 <div id="map"></div>
 
 <div id="ui">
-  <button onclick="startGPS()">開始</button>
-  <button onclick="resetRoute()">リセット</button>
-  <div id="speed">0 km/h</div>
+  <button onclick="goCenter()">📍</button>
 </div>
 
+<div id="speed">0 km/h</div>
+
 <script>
-let map = L.map('map', {
-  zoomControl: false
-}).setView([0,0], 17);
+// ===== 地図 =====
+let map = L.map('map', { zoomControl: false }).setView([0,0], 17);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: ''
-}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-// ===== 三角マーカー =====
-let triangleIcon = L.divIcon({
-  className: '',
-  html: '<div class="triangle"></div>',
-  iconSize: [24, 24],
-  iconAnchor: [12, 12]
-});
-
+// ===== マーカー =====
 let marker = L.marker([0,0], {
-  icon: triangleIcon
+  icon: L.divIcon({
+    html: '<div class="triangle"></div>',
+    className: '',
+    iconSize: [28,28],
+    iconAnchor: [14,14]
+  })
 }).addTo(map);
 
 // ===== ルート =====
@@ -97,15 +91,24 @@ let polyline = L.polyline(latlngs, {
   weight: 5
 }).addTo(map);
 
-// ===== 回転用 =====
+// ===== 状態 =====
 let currentHeading = 0;
+let lastLatLng = null;
 
-// ===== GPS =====
-function startGPS() {
+// ===== 現在地ボタン =====
+function goCenter() {
+  if (lastLatLng) {
+    map.setView(lastLatLng, 17);
+  }
+}
+
+// ===== GPS自動開始 =====
+if (navigator.geolocation) {
   navigator.geolocation.watchPosition(pos => {
 
     let lat = pos.coords.latitude;
     let lng = pos.coords.longitude;
+    lastLatLng = [lat, lng];
 
     // 位置更新
     marker.setLatLng([lat, lng]);
@@ -120,7 +123,7 @@ function startGPS() {
     let kmh = (speed * 3.6).toFixed(1);
     document.getElementById("speed").innerText = kmh + " km/h";
 
-    // ===== 進行方向（heading）=====
+    // ===== 向き =====
     if (pos.coords.heading !== null && !isNaN(pos.coords.heading)) {
       currentHeading = pos.coords.heading;
     }
@@ -131,12 +134,11 @@ function startGPS() {
       el.style.transform = "rotate(" + currentHeading + "deg)";
     }
 
-    // ===== 地図回転（疑似）=====
-    let mapPane = document.querySelector(".leaflet-map-pane");
-    if (mapPane) {
-      mapPane.style.transformOrigin = "center center";
-      mapPane.style.transform =
-        "rotate(" + (-currentHeading) + "deg)";
+    // ===== 地図回転（map-paneだけ回す）=====
+    let pane = document.querySelector(".leaflet-map-pane");
+    if (pane) {
+      pane.style.transformOrigin = "center center";
+      pane.style.transform = "rotate(" + (-currentHeading) + "deg)";
     }
 
   }, err => {
@@ -146,12 +148,8 @@ function startGPS() {
     maximumAge: 0,
     timeout: 5000
   });
-}
-
-// ===== リセット =====
-function resetRoute() {
-  latlngs = [];
-  polyline.setLatLngs([]);
+} else {
+  alert("GPS非対応");
 }
 </script>
 
