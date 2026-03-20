@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>GPS統合アプリ</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<style>
+body {
+  margin: 0;
+  font-family: sans-serif;
+  background: #000;
+  color: #fff;
+  overflow: hidden;
+}
+
+#map {
+  width: 100%;
+  height: 100vh;
+}
+
+/* UI */
+#ui {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1000;
+}
+
+button {
+  padding: 10px;
+  margin: 5px;
+  border-radius: 10px;
+  border: none;
+  background: #0a84ff;
+  color: white;
+  font-size: 14px;
+}
+
+#speed {
+  font-size: 18px;
+  margin-top: 5px;
+}
+
+/* コンパス */
+#compassBox {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  display: none;
+}
+
+#compassCircle {
+  width: 120px;
+  height: 120px;
+  border: 3px solid white;
+  border-radius: 50%;
+  position: relative;
+  background: rgba(0,0,0,0.5);
+}
+
+#arrow {
+  position: absolute;
+  top: 25px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 50px;
+  color: red;
+  transform-origin: 50% 70%;
+}
+
+.north {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="ui">
+  <button onclick="startAll()">開始</button>
+  <button onclick="setMode('map')">マップ</button>
+  <button onclick="setMode('compass')">コンパス</button>
+  <div id="speed">速度: 0 km/h</div>
+</div>
+<div id="compassBox">
+  <div id="compassCircle">
+    <div id="arrow">▲</div>
+    <div class="north">N</div>
+  </div>
+</div>
+<script>
+let map = L.map('map').setView([0,0], 16);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap'
+}).addTo(map);
+
+// ===== カーナビ風現在地マーカー =====
+let marker = L.circleMarker([0,0], {
+  radius: 8,
+  color: "#fff",
+  fillColor: "#0a84ff",
+  fillOpacity: 1
+}).addTo(map);
+
+// ===== ルート線 =====
+let latlngs = [];
+let polyline = L.polyline(latlngs, {
+  color: 'cyan',
+  weight: 5
+}).addTo(map);
+
+// ===== モード =====
+let mode = "map";
+
+function setMode(m) {
+  mode = m;
+
+  document.getElementById("speed").style.display =
+    (m === "map") ? "block" : "none";
+
+  document.getElementById("compassBox").style.display =
+    (m === "compass") ? "block" : "none";
+}
+
+// ===== GPS開始 =====
+function startAll() {
+  enableCompass();
+
+  if (!navigator.geolocation) {
+    alert("GPS非対応");
+    return;
+  }
+
+  navigator.geolocation.watchPosition(pos => {
+
+    let lat = pos.coords.latitude;
+    let lng = pos.coords.longitude;
+
+    // マーカー更新
+    marker.setLatLng([lat, lng]);
+    map.setView([lat, lng]);
+
+    // ルート追加
+    latlngs.push([lat, lng]);
+    polyline.setLatLngs(latlngs);
+
+    // ===== 速度 =====
+    let speed = pos.coords.speed;
+    if (speed === null) speed = 0;
+    let kmh = (speed * 3.6).toFixed(1);
+
+    if (mode === "map") {
+      document.getElementById("speed").innerText =
+        "速度: " + kmh + " km/h";
+    }
+
+  }, err => {
+    alert("GPSエラー: " + err.message);
+  }, {
+    enableHighAccuracy: true,
+    maximumAge: 0,
+    timeout: 5000
+  });
+}
+
+// ===== コンパス許可（iPhone用）=====
+function enableCompass() {
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission()
+      .then(response => {
+        if (response === 'granted') {
+          console.log("コンパスOK");
+        }
+      });
+  }
+}
+
+// ===== コンパス動作 =====
+let arrow = document.getElementById("arrow");
+
+window.addEventListener("deviceorientation", (event) => {
+
+  let heading;
+
+  if (event.webkitCompassHeading) {
+    heading = event.webkitCompassHeading;
+  } else if (event.alpha !== null) {
+    heading = 360 - event.alpha;
+  }
+
+  if (heading !== null) {
+    arrow.style.transform =
+      "translateX(-50%) rotate(" + heading + "deg)";
+  }
+
+});
+</script>
+</body>
+</html>
