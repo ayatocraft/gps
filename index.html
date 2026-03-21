@@ -1,155 +1,193 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>GPSナビ</title>
-
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<title>逃走中 Nexis</title>
+<script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
 
 <style>
-body {
-  margin: 0;
-  background: #000;
-  overflow: hidden;
+body{
+  font-family:sans-serif;
+  background:#111;
+  color:white;
+  text-align:center;
 }
-
-#map {
-  width: 100%;
-  height: 100vh;
+#status{
+  position:fixed;
+  top:10px;
+  right:10px;
+  padding:8px;
+  border-radius:8px;
 }
-
-/* UI（回転の影響受けない） /
-#ui {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 9999;
+.connected{background:green;}
+.disconnected{background:red;}
+#log{
+  height:150px;
+  overflow:auto;
+  border:1px solid #555;
 }
-
-button {
-  padding: 18px 22px;
-  font-size: 18px;
-  border-radius: 50%;
-  border: none;
-  background: #0a84ff;
-  color: white;
-}
-
-/ 速度 /
-#speed {
-  position: fixed;
-  bottom: 20px;
-  left: 20px;
-  font-size: 28px;
-  font-weight: bold;
-  color: white;
-  z-index: 9999;
-}
-
-/ 三角マーカー */
-.triangle {
-  width: 0;
-  height: 0;
-  border-left: 14px solid transparent;
-  border-right: 14px solid transparent;
-  border-bottom: 28px solid #0a84ff;
-  transform-origin: center;
-}
+button{padding:10px;margin:5px;}
 </style>
 </head>
 <body>
 
-<div id="map"></div>
+<h2 id="status">接続中...</h2>
 
-<div id="ui">
-  <button onclick="goCenter()">📍</button>
+<h1 id="timer">--:--</h1>
+<h3 id="count">残り人数: 0</h3>
+
+<div id="log"></div>
+
+<hr>
+
+<button onclick="setMode('host')">ホスト</button>
+<button onclick="setMode('player')">参加者</button>
+
+<div id="nameBox" style="display:none;">
+  <input id="nameInput" placeholder="名前">
+  <button onclick="setName()">決定</button>
 </div>
 
-<div id="speed">0 km/h</div>
+<div id="hostUI" style="display:none;">
+  <input id="timeInput" type="number" placeholder="秒">
+  <button onclick="startGame()">開始</button>
+</div>
+
+<div id="playerUI" style="display:none;">
+  <button onclick="capture()">確保</button>
+  <button onclick="revive()">復活</button>
+</div>
 
 <script>
-// ===== 地図 =====
-let map = L.map('map', { zoomControl: false }).setView([0,0], 17);
+// ★あなたのAPIキー
+const ably = new Ably.Realtime("JW3Hvw.fw1o0A:-zV3VatQkBUx-hVmtwFGE6Bwbv_wG4kIoz7LHOKNawY");
+const channel = ably.channels.get("tosochu");
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+// 接続状態
+ably.connection.on(state=>{
+  let el = document.getElementById("status");
+  if(state.current==="connected"){
+    el.innerText="接続OK";
+    el.className="connected";
+  }else{
+    el.innerText="切断";
+    el.className="disconnected";
+  }
+});
 
-// ===== マーカー =====
-let marker = L.marker([0,0], {
-  icon: L.divIcon({
-    html: '<div class="triangle"></div>',
-    className: '',
-    iconSize: [28,28],
-    iconAnchor: [14,14]
-  })
-}).addTo(map);
+// 状態
+let players = {};
+let myId = "p"+Math.random();
+let myName="";
+let timer=0;
+let interval;
+let mode="";
 
-// ===== ルート =====
-let latlngs = [];
-let polyline = L.polyline(latlngs, {
-  color: 'cyan',
-  weight: 5
-}).addTo(map);
+// モード
+function setMode(m){
+  mode=m;
+  document.getElementById("hostUI").style.display = m==="host"?"block":"none";
+  document.getElementById("playerUI").style.display = m==="player"?"block":"none";
 
-// ===== 状態 =====
-let currentHeading = 0;
-let lastLatLng = null;
-
-// ===== 現在地ボタン =====
-function goCenter() {
-  if (lastLatLng) {
-    map.setView(lastLatLng, 17);
+  if(m==="player"){
+    document.getElementById("nameBox").style.display="block";
   }
 }
 
-// ===== GPS自動開始 =====
-if (navigator.geolocation) {
-  navigator.geolocation.watchPosition(pos => {
+// 名前
+function setName(){
+  myName = document.getElementById("nameInput").value || myId;
+  players[myId] = {alive:true,name:myName};
+  sendState();
+  log("参加: "+myName);
+}
 
-    let lat = pos.coords.latitude;
-    let lng = pos.coords.longitude;
-    lastLatLng = [lat, lng];
+// タイマー
+function startGame(){
+  timer = parseInt(document.getElementById("timeInput").value) || 60;
+  interval = setInterval(()=>{
+    timer--;
+    updateTimer();
+    broadcast({type:"timer",timer});
 
-    // 位置更新
-    marker.setLatLng([lat, lng]);
-    map.setView([lat, lng]);
-
-    // ルート
-    latlngs.push([lat, lng]);
-    polyline.setLatLngs(latlngs);
-
-    // ===== 速度 =====
-    let speed = pos.coords.speed || 0;
-    let kmh = (speed * 3.6).toFixed(1);
-    document.getElementById("speed").innerText = kmh + " km/h";
-
-    // ===== 向き =====
-    if (pos.coords.heading !== null && !isNaN(pos.coords.heading)) {
-      currentHeading = pos.coords.heading;
+    if(timer<=0){
+      clearInterval(interval);
+      broadcast({type:"end",players});
     }
+  },1000);
+}
 
-    // 三角回転
-    let el = marker.getElement();
-    if (el) {
-      el.style.transform = "rotate(" + currentHeading + "deg)";
-    }
+function updateTimer(){
+  let m=Math.floor(timer/60);
+  let s=timer%60;
+  document.getElementById("timer").innerText =
+    m+":"+String(s).padStart(2,"0");
+}
 
-    // ===== 地図回転（map-paneだけ回す）=====
-    let pane = document.querySelector(".leaflet-map-pane");
-    if (pane) {
-      pane.style.transformOrigin = "center center";
-      pane.style.transform = "rotate(" + (-currentHeading) + "deg)";
-    }
+// プレイヤー
+function capture(){
+  if(players[myId]){
+    players[myId].alive=false;
+    sendState();
+  }
+}
 
-  }, err => {
-    alert("GPSエラー: " + err.message);
-  }, {
-    enableHighAccuracy: true,
-    maximumAge: 0,
-    timeout: 5000
-  });
-} else {
-  alert("GPS非対応");
+function revive(){
+  if(players[myId]){
+    players[myId].alive=true;
+    sendState();
+  }
+}
+
+// 通信
+function sendState(){
+  broadcast({type:"players",players});
+}
+
+function broadcast(d){
+  channel.publish("update",d);
+}
+
+// 受信
+channel.subscribe("update",msg=>{
+  let d = msg.data;
+
+  if(d.type==="timer"){
+    timer=d.timer;
+    updateTimer();
+  }
+
+  if(d.type==="players"){
+    players=d.players;
+    updateCount();
+  }
+
+  if(d.type==="end"){
+    players=d.players;
+    showResult();
+  }
+});
+
+// 人数
+function updateCount(){
+  let alive = Object.values(players).filter(p=>p.alive).length;
+  document.getElementById("count").innerText =
+    "残り人数: "+alive;
+}
+
+// ログ
+function log(t){
+  let el = document.getElementById("log");
+  el.innerHTML += "<div>"+t+"</div>";
+}
+
+// 結果
+function showResult(){
+  let w = Object.values(players)
+    .filter(p=>p.alive)
+    .map(p=>p.name);
+
+  log("🏆逃走成功: "+(w.join(", ")||"なし"));
 }
 </script>
 
